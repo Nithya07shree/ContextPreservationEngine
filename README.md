@@ -7,7 +7,7 @@ Modern developers struggle to maintain critical legacy system infrastructures si
 This is the problem PensieveAI aims to solve with the help of a 100% private, RAG (Retrieval Augmented Generation) based application that indexes a repository's code alongside additional context such as Slack threads and Jira CSV exports, thereby solving a WEEKS long problem in just HOURS.
 
 ### Architecture Diagram
-![Architecutre Diagram](./images/image.png)
+![Architecutre Diagram](assets/architecture_diagram.png)
 
 ### Key Features
 
@@ -20,6 +20,19 @@ This is the problem PensieveAI aims to solve with the help of a 100% private, RA
 
 
 ## Requirements
+
+### Hardware Requirements
+1) Intel i5 Processor or higher
+2) 8GB RAM or higher
+
+### Software Requirements
+
+1) Windows 10 or above
+2) Python (version 3.10)
+3) ChromaDB
+4) Ollama Models (qwen2.5-coder:3b, qllama/bge-m3:q8_0, qllama/bge-m3:q4_k_m) 
+5) Streamlit
+6) Visual Studio Code (or any similar IDE)
 
 ### Functional Requirements
 
@@ -90,12 +103,6 @@ python ingest_script_scrapy.py
 ## Usage and Example
 
 ## Project Structure
-
-## Tech Stack
-1) Python (version 3.10)
-2) ChromaDB
-3) Ollama Models (qwen2.5-coder:3b, qllama/bge-m3:q8_0, qllama/bge-m3:q4_k_m)
-
 
 ## RAG Stuff
 
