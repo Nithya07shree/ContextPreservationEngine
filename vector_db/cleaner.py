@@ -20,13 +20,24 @@ EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".ts": "typescript",
     ".tsx": "typescript",
     ".java": "java",
+    ".php": "php",
     ".json": "json",
     ".md": "markdown",
     ".rst": "restructuredtext",
     ".cfg": "ini",
     ".ini": "ini",
     ".csv": "csv",
+    ".tpl": "smarty",
+    ".smarty": "smarty",
+    ".sql": "sql",
+    ".xml": "xml",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".sh": "bash",
+    ".bash": "bash",
 }
+
 
 def detect_language(file_path: str | Path) -> str:
     ext = Path(file_path).suffix.lower()
@@ -46,8 +57,6 @@ def clean_code(raw: str) -> str:
             blank_run = 0
             cleaned.append(line)
     return "\n".join(cleaned).strip()
-
-# Slack cleaner
 
 def clean_slack_message(text: str) -> str:
     """
@@ -79,9 +88,7 @@ def load_slack_export(file_path: str | Path) -> list[dict[str, Any]]:
                 messages.extend(value)
     return messages
 
-# Jira cleaner
 def clean_jira_text(value: str) -> str:
-    # To clean the value of a single field
     if not value:
         return ""
     value = value.replace("\\n", "\n")
@@ -100,14 +107,13 @@ def _extract_jira_comments(row: dict[str, str]) -> list[str]:
         raw = row.get(key, "").strip()
         if not raw:
             continue
-        # If comments are separated using a semi-colon.
+        # Cleaning comments that are separated with semicolons
         if re.search(r"\s;\s", raw):
             for entry in re.split(r"\s;\s", raw):
                 entry = entry.strip()
                 if entry:
                     comments.append(entry)
         else:
-            # Only one proper column present
             comments.append(raw)
 
     return comments
@@ -135,10 +141,6 @@ def load_jira_csv(file_path: str | Path) -> list[dict[str, str]]:
 
 
 def build_jira_content(row: dict[str, str]) -> str:
-    """
-    Build a single readable text blob from a Jira CSV row.
-    Order: Summary -> Type/Status/Priority -> Description -> Comments.
-    """
     parts = []
 
     summary = _get_field(row, "Summary", "Title", "Name", "Subject")
@@ -160,7 +162,7 @@ def build_jira_content(row: dict[str, str]) -> str:
     if comments:
         parts.append("Comments:\n" + "\n---\n".join(comments))
 
-    # Safety fallback: if no known fields matched at all, all fields are preserved.
+    # Fall back, if none of the fields match the required fields, all available fields are returned instead so that all tickets are preserved.
     if not parts:
         fallback = " | ".join(f"{k}: {v}" for k, v in row.items() if v.strip())
         if fallback:

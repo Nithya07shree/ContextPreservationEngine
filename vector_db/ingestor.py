@@ -10,23 +10,25 @@ from typing import Optional
 import chromadb
 
 from chunker import chunk_code_file, chunk_slack_export, chunk_jira_csv
-from embedder import get_embedding, select_embedding_model
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from embedder import get_embedding, get_embeddings_batch, select_embedding_model
 from config import CHROMA_PATH, COLLECTION_NAME
 
-# File extensions this pipeline will attempt to ingest as code
 CODE_EXTENSIONS = {
     ".py", ".js", ".jsx", ".ts", ".tsx",
-    ".java", ".md", ".rst", ".cfg", ".ini",
+    ".java", ".php", ".md", ".rst", ".cfg",
+    ".ini", ".tpl", ".smarty", ".sql", ".xml",
+    ".html", ".htm", ".css", ".sh", ".bash",
 }
 
 
-def get_collection(chroma_path: str = None) -> chromadb.Collection:
+def get_collection(collection_name: str = None, chroma_path: str = None) -> chromadb.Collection:
     if chroma_path is None:
         chroma_path = CHROMA_PATH
     client = chromadb.PersistentClient(path=chroma_path)
     collection = client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}, 
+        name=collection_name or COLLECTION_NAME,
+        metadata={"hnsw:space": "cosine"},  # cosine similarity for semantic search
     )
     return collection
 
@@ -35,11 +37,11 @@ def ingest_code_file(
     file_path: str | Path,
     collection: chromadb.Collection,
     model: Optional[str] = None,
-    project="unknown",
+    project: str = "unknown",
 ) -> int:
     chunks = chunk_code_file(file_path)
-    for c in chunks:
-        c["metadata"]["project"] = project
+    for chunk in chunks:
+        chunk["metadata"]["project"] = project
     return _upsert_chunks(chunks, collection, model)
 
 
@@ -48,11 +50,11 @@ def ingest_slack_file(
     collection: chromadb.Collection,
     channel_name: str = "",
     model: Optional[str] = None,
-    project="unknown",
+    project: str = "unknown",
 ) -> int:
     chunks = chunk_slack_export(file_path, channel_name=channel_name)
-    for c in chunks:
-        c["metadata"]["project"] = project
+    for chunk in chunks:
+        chunk["metadata"]["project"] = project
     return _upsert_chunks(chunks, collection, model)
 
 
@@ -60,14 +62,14 @@ def ingest_jira_file(
     file_path: str | Path,
     collection: chromadb.Collection,
     model: Optional[str] = None,
-    project="unknown",
+    project: str = "unknown",
 ) -> int:
     chunks = chunk_jira_csv(file_path)
-    for c in chunks:
-        c["metadata"]["project"] = project
+    for chunk in chunks:
+        chunk["metadata"]["project"] = project
     return _upsert_chunks(chunks, collection, model)
 
-# Batch / directory ingestion
+
 def ingest_directory(
     directory: str | Path,
     collection: chromadb.Collection,
@@ -107,72 +109,104 @@ def ingest_directory(
         except Exception as e:
             print(f"[ingestor] ERROR  {file_path.name}: {e}")
             results[str(file_path)] = -1
+
     return results
 
-# Core upsert logic
+
+#UPSERT
+EMBED_BATCH_SIZE = 50
+MAX_WORKERS = 4
+
+
+def _process_batch(
+    batch: list[dict],
+    collection: chromadb.Collection,
+    model: str,
+) -> int:
+
+    batch = [c for c in batch if c["content"].strip()]
+    if not batch:
+        return 0
+
+    batch_ids = [c["chunk_id"] for c in batch]
+    try:
+        existing = set(collection.get(ids=batch_ids)["ids"])
+    except Exception:
+        existing = set()
+
+    new_chunks = [c for c in batch if c["chunk_id"] not in existing]
+    if not new_chunks:
+        return 0
+
+    texts = [c["content"] for c in new_chunks]
+    try:
+        embeddings = get_embeddings_batch(texts, model=model)
+    except Exception as e:
+        print(f"[ingestor] Batch embedding failed: {e}")
+        return 0
+
+    if len(embeddings) != len(new_chunks):
+        print(f"[ingestor] Embedding count mismatch: got {len(embeddings)}, expected {len(new_chunks)}")
+        return 0
+
+    # Step 4 — prepare and upsert
+    ids, docs, metas = [], [], []
+    for chunk, embedding in zip(new_chunks, embeddings):
+        ids.append(chunk["chunk_id"])
+        docs.append(chunk["content"])
+        safe_meta = {
+            k: (str(v) if not isinstance(v, (str, int, float, bool)) else v)
+            for k, v in chunk["metadata"].items()
+        }
+        metas.append(safe_meta)
+
+    collection.upsert(
+        ids=ids,
+        embeddings=embeddings,
+        documents=docs,
+        metadatas=metas,
+    )
+    return len(ids)
+
+
 def _upsert_chunks(
     chunks: list[dict],
     collection: chromadb.Collection,
     model: Optional[str] = None,
 ) -> int:
+
     if not chunks:
         return 0
 
     if model is None:
         model = select_embedding_model()
+    # Split all chunks into fixed-size batches
+    batches = [
+        chunks[i:i + EMBED_BATCH_SIZE]
+        for i in range(0, len(chunks), EMBED_BATCH_SIZE)
+    ]
 
-    BATCH_SIZE = 50
     total_upserted = 0
 
-    for i in range(0, len(chunks), BATCH_SIZE):
-        batch = chunks[i:i + BATCH_SIZE]
-
-        batchid = [c["chunk_id"] for c in batch if c["content"].strip()]
-        try:
-            existing = set(collection.get(ids=batchid)["ids"])
-        except Exception:
-            existing = set()
-
-        ids = []
-        embeddings = []
-        documents = []
-        metadatas = []
-
-        for chunk in batch:
-            content = chunk["content"]
-            if not content.strip():
-                continue
-
-            if chunk["chunk_id"] in existing:
-                continue
-
+    # Process batches concurrently — each worker handles one batch independently
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_process_batch, batch, collection, model): batch
+            for batch in batches
+        }
+        for future in as_completed(futures):
             try:
-                embedding = get_embedding(content, model=model)
+                total_upserted += future.result()
             except Exception as e:
-                print(f"[ingestor] Embedding failed for chunk {chunk['chunk_id']}: {e}")
-                continue
-
-            ids.append(chunk["chunk_id"])
-            embeddings.append(embedding)
-            documents.append(content)
-            safe_metadata = {
-                k: (str(v) if not isinstance(v, (str, int, float, bool)) else v)
-                for k, v in chunk["metadata"].items()
-            }
-            metadatas.append(safe_metadata)
-
-        if ids:
-            collection.upsert(
-                ids=ids,
-                embeddings=embeddings,
-                documents=documents,
-                metadatas=metadatas,
-            )
-            total_upserted += len(ids)
+                print(f"[ingestor] Batch failed: {e}")
 
     return total_upserted
 
+
+# ---------------------------------------------------------------------------
 # Similarity search
+# ---------------------------------------------------------------------------
+
 def search(
     query: str,
     collection: chromadb.Collection,
@@ -181,11 +215,19 @@ def search(
     project: Optional[str] = None,
     model: Optional[str] = None,
 ) -> list[dict]:
+    """
+    Perform similarity search against the collection.
+    Optionally filter by source_type: "code" | "slack" | "jira"
+    Optionally filter by project: "scrapy" | "your-other-repo" | etc.
+    Both filters can be combined — ChromaDB uses $and automatically.
+    Returns list of result dicts with content, metadata, and distance.
+    """
     if model is None:
         model = select_embedding_model()
 
     query_embedding = get_embedding(query, model=model)
 
+    # Build where clause — supports source_type, project, or both combined
     filters = {}
     if source_type:
         filters["source_type"] = {"$eq": source_type}
@@ -197,6 +239,7 @@ def search(
     elif len(filters) == 1:
         where = filters
     else:
+        # ChromaDB requires $and when combining multiple conditions
         where = {"$and": [{k: v} for k, v in filters.items()]}
 
     results = collection.query(

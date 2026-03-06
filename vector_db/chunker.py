@@ -1,16 +1,3 @@
-"""
-chunker.py
-----------
-Splits cleaned source material into embedding-ready chunks.
-
-Chunking units:
-  code  → function-level, max MAX_CODE_LINES lines per chunk
-  slack → thread-level, max MAX_SLACK_TOKENS estimated tokens
-  jira  → one ticket per chunk (oversized tickets truncate oldest comments)
-
-All chunks are returned as dicts ready for ChromaDB upsert.
-"""
-
 import ast
 import hashlib
 import json
@@ -25,55 +12,34 @@ from cleaner import (
     detect_language,
     build_jira_content,
 )
-# Tuneable constants
-MAX_CODE_LINES = 150        # ~600–900 tokens for average Python; fits 8k ctx window
-MAX_SLACK_TOKENS = 512      # Conservative estimate: avg 4 chars/token → ~2048 chars
-MAX_JIRA_TOKENS = 1000      # Tickets rarely exceed this; comments truncated if so
-AVG_CHARS_PER_TOKEN = 4     # Rough estimate for token budgeting without a tokenizer
 
-# Deterministic ID generation
+MAX_CODE_LINES = 150     
+MAX_SLACK_TOKENS = 512    
+MAX_JIRA_TOKENS = 1000   
+AVG_CHARS_PER_TOKEN = 4    
+
+
 def make_chunk_id(*parts: str) -> str:
-    """
-    Deterministic UUID-style ID from input parts.
-    Same inputs always produce the same ID — enables safe upsert (no duplicates).
-    """
     raw = "|".join(str(p) for p in parts)
     hash_hex = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    # Format as UUID for ChromaDB compatibility
     return str(uuid.UUID(hash_hex[:32]))
 
-# Code chunker
 def _parse_with_py2_fallback(source: str):
-    """
-    Try parsing source as Python 3. If that fails, apply incremental
-    Python 2 → 3 syntax patches and retry before giving up.
-
-    Handles the most common Python 2 constructs that break ast.parse:
-      - print statements     →  print() calls
-      - except Exc, e:       →  except Exc as e:
-      - basestring / unicode →  str
-    Returns an ast.AST on success, or None if still unparseable.
-    """
     try:
         return ast.parse(source)
     except SyntaxError:
         pass
 
     patched = source
-
     patched = re.sub(r'^(\s*)print (?!\()(.+)$', r'\1print(\2)', patched, flags=re.MULTILINE)
-
-    # except ExcType, varname: → except ExcType as varname:
     patched = re.sub(r'except\s+(\w+(?:\.\w+)*)\s*,\s*(\w+)\s*:', r'except \1 as \2:', patched)
-
-    # Python 2 builtins removed in Python 3
     patched = patched.replace("basestring", "str")
     patched = re.sub(r'\bunicode\(', 'str(', patched)
 
     try:
         return ast.parse(patched)
     except SyntaxError:
-        return None  # genuinely unparseable — caller falls back to whole-file chunk
+        return None  # literally cannot be parsed. 
 
 
 def _extract_python_functions(source: str, file_name: str) -> list[dict[str, Any]]:
@@ -109,7 +75,6 @@ def _extract_python_functions(source: str, file_name: str) -> list[dict[str, Any
 
     for node in ast.iter_child_nodes(tree):
         visit(node)
-
     if not functions:
         functions = [{
             "function_name": "__module__",
@@ -130,7 +95,6 @@ def _split_oversized_function(func: dict[str, Any], file_name: str) -> list[dict
     start = 0
     while start < len(lines):
         end = min(start + MAX_CODE_LINES, len(lines))
-        # Try to find a blank line boundary to split cleanly
         if end < len(lines):
             for i in range(end, max(start + MAX_CODE_LINES // 2, start + 1), -1):
                 if lines[i - 1].strip() == "":
@@ -147,7 +111,77 @@ def _split_oversized_function(func: dict[str, Any], file_name: str) -> list[dict
     return sub_chunks
 
 
+def _extract_functions_by_regex(source, file_name, pattern, language):
+    lines = source.split('\n')
+    functions = []
+
+    for match in pattern.finditer(source):
+        groups = match.groupdict()
+        func_name = groups.get('name') or groups.get('ctor')
+        if not func_name:
+            continue
+
+        start_line = source[:match.start()].count('\n') + 1
+
+        brace_pos = source.find('{', match.start())
+        if brace_pos == -1:
+            continue
+
+        depth = 0
+        end_pos = brace_pos
+        for i, ch in enumerate(source[brace_pos:], brace_pos):
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end_pos = i
+                    break
+
+        end_line = source[:end_pos].count('\n') + 1
+        functions.append({
+            'function_name': func_name,
+            'start_line': start_line,
+            'end_line': end_line,
+            'lines': lines[start_line - 1:end_line],
+        })
+
+    if not functions:
+        functions = [{
+            'function_name': '__module__',
+            'start_line': 1,
+            'end_line': len(lines),
+            'lines': lines,
+        }]
+
+    return functions
+
+
+_PHP_FUNC_PATTERN = re.compile(
+    "(?:(?:public|private|protected|static|abstract|final)\\s+)*"
+    "function\\s+(?P<name>[a-zA-Z_\\x7f-\\xff][a-zA-Z0-9_\\x7f-\\xff]*)\\s*\\(",
+    re.MULTILINE,
+)
+
+_JAVA_METHOD_PATTERN = re.compile(
+    "(?:(?:public|private|protected|static|final|native|synchronized|abstract|transient)\\s+)+"
+    "(?:"
+        "(?:[a-zA-Z_$][a-zA-Z0-9_$<>\\[\\]]*\\s+)(?P<name>[a-zA-Z_$][a-zA-Z0-9_$]*)"
+        "|(?P<ctor>[A-Z][a-zA-Z0-9_$]*)"
+    ")\\s*\\([^)]*\\)\\s*"
+    "(?:throws\\s+[a-zA-Z_$][a-zA-Z0-9_$,\\s]*\\s*)?",
+    re.MULTILINE,
+)
+
+_JS_FUNC_PATTERN = re.compile(
+    "(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s*"
+    "(?P<name>[a-zA-Z_$][a-zA-Z0-9_$]*)\\s*\\(",
+    re.MULTILINE,
+)
+
+
 def chunk_code_file(file_path: str | Path) -> list[dict[str, Any]]:
+
     file_path = Path(file_path)
     language = detect_language(file_path)
     raw = file_path.read_text(encoding="utf-8", errors="replace")
@@ -157,8 +191,24 @@ def chunk_code_file(file_path: str | Path) -> list[dict[str, Any]]:
 
     if language == "python":
         functions = _extract_python_functions(source, file_name)
+    elif language == "php":
+        functions = _extract_functions_by_regex(source, file_name, _PHP_FUNC_PATTERN, language)
+    elif language == "java":
+        functions = _extract_functions_by_regex(source, file_name, _JAVA_METHOD_PATTERN, language)
+    elif language in ("javascript", "typescript"):
+        functions = _extract_functions_by_regex(source, file_name, _JS_FUNC_PATTERN, language)
+    elif language in ("smarty", "html", "css", "xml", "sql", "bash"):
+        functions = []
+        for i in range(0, len(lines), MAX_CODE_LINES):
+            chunk_lines = lines[i:i + MAX_CODE_LINES]
+            functions.append({
+                "function_name": f"block_{i // MAX_CODE_LINES}",
+                "start_line": i + 1,
+                "end_line": i + len(chunk_lines),
+                "lines": chunk_lines,
+            })
     else:
-        # Non-Python: chunk by MAX_CODE_LINES line windows
+        # All other languages: line-window fallback
         functions = []
         for i in range(0, len(lines), MAX_CODE_LINES):
             chunk_lines = lines[i:i + MAX_CODE_LINES]
@@ -265,8 +315,6 @@ def _split_oversized_thread(
         current_tokens += msg_tokens
 
     flush(current_batch, idx)
-
-    # Patch total_chunks now that we know
     total = len(sub_chunks)
     for chunk in sub_chunks:
         chunk["metadata"]["total_chunks"] = total
@@ -279,12 +327,10 @@ def chunk_slack_export(file_path: str | Path, channel_name: str = "") -> list[di
     file_path = Path(file_path)
 
     if not channel_name:
-        # Slack exports use parent folder as channel name
         channel_name = file_path.parent.name or file_path.stem
 
     messages = load_slack_export(file_path)
 
-    # Group messages into threads
     threads: dict[str, list[dict[str, Any]]] = {}
     standalone: list[dict[str, Any]] = []
 
@@ -300,7 +346,6 @@ def chunk_slack_export(file_path: str | Path, channel_name: str = "") -> list[di
 
     # Process threads
     for thread_ts, thread_messages in threads.items():
-        # Sort by timestamp
         thread_messages.sort(key=lambda m: float(m.get("ts", 0)))
         content, authors, ts = _build_thread_content(thread_messages)
 
@@ -324,7 +369,6 @@ def chunk_slack_export(file_path: str | Path, channel_name: str = "") -> list[di
                 },
             })
 
-    # Process standalone messages (no thread_ts) as individual chunks
     for msg in standalone:
         text = clean_slack_message(msg.get("text", ""))
         if not text:
@@ -358,6 +402,7 @@ def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
 
 
 def chunk_jira_csv(file_path: str | Path) -> list[dict[str, Any]]:
+
     from cleaner import load_jira_csv
     file_path = Path(file_path)
     rows = load_jira_csv(file_path)
@@ -366,8 +411,7 @@ def chunk_jira_csv(file_path: str | Path) -> list[dict[str, Any]]:
     TICKET_ID_CANDIDATES = ["Issue key", "Issue Key", "Key", "IssueKey", "Issue id", "Issue Id", "ID"]
 
     def resolve_ticket_id(row: dict) -> str:
-        # Normalize all row keys: strip whitespace and compare case-insensitively
-        # This handles BOM artifacts, invisible spaces, and casing variations
+
         row_normalized = {k.strip().lower(): v for k, v in row.items()}
         for candidate in TICKET_ID_CANDIDATES:
             val = row_normalized.get(candidate.strip().lower(), "").strip()
@@ -375,7 +419,6 @@ def chunk_jira_csv(file_path: str | Path) -> list[dict[str, Any]]:
                 return val
         return ""
 
-    # Diagnostic: print actual columns on first run to aid debugging
     if rows:
         print(f"[chunker] Jira CSV loaded: {len(rows)} rows")
         print(f"[chunker] Columns detected: {list(rows[0].keys())}")

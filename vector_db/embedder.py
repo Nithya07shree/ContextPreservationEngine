@@ -27,17 +27,23 @@ def get_embedding(text: str, model: Optional[str] = None) -> list[float]:
     try:
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/embeddings",
-            json={"model": model, "prompts": text},
-            timeout=120,
+            json={"model": model, "prompt": text},
+            timeout=60,
         )
         response.raise_for_status()
-        return response.json()["embeddings"]
+        return response.json()["embedding"]
 
     except Exception as e:
         if model == MODEL_PRIMARY:
             print(f"[embedder] Primary model failed ({e}), retrying with fallback.")
             return get_embedding(text, model=MODEL_FALLBACK)
         raise RuntimeError(f"[embedder] Both models failed. Last error: {e}")
+
+
+def get_embeddings_batch(texts: list[str], model: Optional[str] = None) -> list[list[float]]:
+    if model is None:
+        model = select_embedding_model()
+    return [get_embedding(text, model=model) for text in texts]
 
 
 def get_embedding_dimensions(model: Optional[str] = None) -> int:
