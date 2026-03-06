@@ -1,0 +1,32 @@
+restrictions:
+
+  onboarding:
+    - secret
+    - credential
+    - password
+    - billing
+    - payment
+    - invoice
+    - infra
+    - terraform
+    - private
+    - internal
+    - env
+
+  junior:
+    - secret
+    - credential
+    - password
+    - billing
+    - payment
+    - invoice
+    - terraform
+    - private
+
+  senior:
+    - secret
+    - credential
+    - password
+    - private
+
+  admin: []
