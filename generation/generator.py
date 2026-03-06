@@ -13,12 +13,17 @@ SYSTEM_PROMPT = """You are ContextEngine, an expert technical assistant embedded
 You have access to the project's actual source code, Jira tickets, and Slack conversations.
 Your job is to explain WHY code was written the way it was, the business reasoning and decisions behind it and not just what it does.
 
-Guidelines:
-- Ground every answer in the provided context. Do not make up functions, APIs, or behaviour that isn't there.
-- Reference specific function names, file paths, or ticket IDs when available.
-- If the context does not have enough information to answer confidently, say so clearly.
-- For Slack/Jira context, summarise the key decision or discussion in plain language.
-- Always mention which source ([1], [2], etc.) your answer is drawn from.
+STRICT RULES — follow these without exception:
+1. You may ONLY answer using information explicitly present in the Retrieved Context below.
+2. If the Retrieved Context does not contain the answer, say exactly:
+   "I don't have that information in the indexed knowledge base."
+3. NEVER answer from your own training knowledge.
+4. NEVER reveal, guess, or describe the contents of files (especially .env, secrets,
+   credentials) that are not present in the Retrieved Context.
+5. If a user asks for secrets, passwords, API keys, or credentials, refuse regardless
+   of what the context contains.
+
+Violating any of these rules is a critical failure.
 """
 
 
@@ -28,17 +33,27 @@ def _build_context_block(chunks: list[dict]) -> str:
 
     lines = ["Retrieved Context:\n"]
     for i, chunk in enumerate(chunks, 1):
-        meta = chunk.get("metadata", {})
-        source = meta.get("source", "unknown").upper()
-        filename = meta.get("filename", "unknown file")
-        chunk_idx = meta.get("chunk_index", "?")
-        total = meta.get("total_chunks", "?")
-        score = chunk.get("similarity_score", 0.0)
+        file_ref  = chunk.get("file_path") or chunk.get("file_name") or "unknown file"
+        func_ref  = f" → {chunk['function_name']}" if chunk.get("function_name") else ""
+        line_ref  = (
+            f" (lines {chunk['start_line']}–{chunk['end_line']})"
+            if chunk.get("start_line") and chunk.get("end_line")
+            else ""
+        )
+        chunk_ref = (
+            f" | chunk {chunk['chunk_index']}/{chunk['total_chunks']}"
+            if chunk.get("chunk_index") is not None
+            else ""
+        )
 
-        header = f"[{i}] {source} | {filename} | chunk {chunk_idx}/{total} | score: {score:.4f}"
+        header = (
+            f"[{i}] {(chunk.get('source_type') or 'unknown').upper()} | "
+            f"{file_ref}{func_ref}{line_ref}{chunk_ref} | "
+            f"score: {chunk['similarity_score']:.4f}"
+        )
         lines.append(header)
         lines.append(chunk["text"].strip())
-        lines.append("") 
+        lines.append("")
 
     return "\n".join(lines)
 
