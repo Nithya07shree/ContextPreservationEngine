@@ -92,22 +92,23 @@ cd jira
 # Add jira export/generated mock jira csv for testing.
 
 ```
-4) Populate Vector Database:
+4) Create a `.env` file and refer to `.env.examples` for the required environment variables
+5) Populate Vector Database:
 
 ```
 python ingest_script_freemed.py
 # OR
 python ingest_script_scrapy.py
 ```
-5) Run ChromaDB server after ingestion:
+6) Run ChromaDB server after ingestion:
 ```
 chroma run --host 0.0.0.0 --port 8000 --path ./chromadb_store
 ```
-6) Activate Ollama Server: 
+7) Activate Ollama Server: 
 ```
 ollama serve
 ```
-7) Run Streamlit UI:
+8) Run Streamlit UI:
 ```
 streamlit run app.py
 ```
