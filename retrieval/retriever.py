@@ -1,4 +1,3 @@
-
 import time
 import yaml
 import chromadb
@@ -16,6 +15,13 @@ _chroma_client = chromadb.HttpClient(
 )
 _collection = _chroma_client.get_collection(name=settings.chroma_collection_name)
 _ollama     = OllamaClient(host=settings.ollama_base_url)
+
+ROLE_THRESHOLDS = {
+    "admin": 0.40,   
+    "senior": 0.45,
+    "junior": 0.50,
+    "onboarding": 0.55, 
+}
 
 def _load_restrictions() -> dict[str, list[str]]:
     policy_path = Path("config/access_policy.yaml")
@@ -84,8 +90,15 @@ def retrieve_context(
     query:           str,
     user_role:       str   = "onboarding",
     n_results:       int   = None,
-    score_threshold: float = 0.45,
+    score_threshold: float = None,
 ) -> list[dict]:
+    if score_threshold is None:
+        score_threshold = ROLE_THRESHOLDS.get(user_role, 0.45)
+    logger.debug(
+        "Retrieving | role=%s  threshold=%.2f  query='%s...'",
+        user_role, score_threshold, query[:60],
+    )
+    
     if not query or not query.strip():
         logger.warning("retrieve_context() called with empty query")
         return []

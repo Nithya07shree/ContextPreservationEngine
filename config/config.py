@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     chroma_collection_name: str = "context_engine"
     chroma_host: str = "localhost"
     chroma_port: int = 8000
-    top_k_results: int = 1
+    top_k_results: int = 2
     class Config:
         env_file= ".env"
         

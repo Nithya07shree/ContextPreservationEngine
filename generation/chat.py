@@ -14,10 +14,10 @@ class DocumentationBot:
         self._total_queries = 0 
 
 
-    def ask(self, query: str, retries: int = 2, delay: float = 1.0) -> str:
+    def ask(self, query: str, retries: int = 2, delay: float = 1.0) -> tuple[str, list]:
         if not query or not query.strip():
             logger.warning("ask() called with empty query")
-            return "Please enter a question."
+            return "Please enter a question.",[]
 
         logger.info("User query: '%s...'", query[:100])
 
@@ -44,7 +44,7 @@ class DocumentationBot:
                     "Query answered | attempt=%d  history_turns=%d  total_queries=%d",
                     attempt, len(self.conversation_history) // 2, self._total_queries,
                 )
-                return response
+                return response, context_chunks
 
             except Exception as e:
                 last_exc = e
@@ -61,7 +61,7 @@ class DocumentationBot:
         return (
             "Sorry, I ran into an issue processing your question. "
             "The local model or database may be temporarily unavailable — "
-            "please try again in a moment."
+            "please try again in a moment.",[]
         )
 
     def reset(self) -> None:
