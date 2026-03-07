@@ -44,6 +44,18 @@ while True:
                 print(f"{label}: {msg['content'][:120]}...")
             print(f"--- {bot.history_turns} turn(s) in memory ---\n")
         continue
+    if query.lower() == "debug":
+        from retrieval.retriever import retrieve_context
+        chunks = retrieve_context(
+            input("Query to debug: "),
+            user_role=st.session_state.get("role", "admin")
+        )
+        print(f"\n--- {len(chunks)} chunks retrieved ---")
+        for i, c in enumerate(chunks, 1):
+            print(f"\n[{i}] score={c['similarity_score']}  file={c.get('file_path','?')}")
+            print(c["text"][:300])
+        print("---\n")
+        continue
     if query.lower() == "paths":
         import chromadb
         from config.config import settings

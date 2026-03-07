@@ -205,38 +205,50 @@ def _render_sources(sources):
     if not sources:
         return
 
-    pills = []
-
-    for c in sources:
-
-        name = c.get("file_name") or "source"
-        func = c.get("function_name") or ""
-        s = c.get("start_line")
-        e = c.get("end_line")
-
-        label = name
-
-        if func:
-            label += f" — {func}"
-        elif s and e:
-            label += f" L{s}-{e}"
-
-        pills.append(
-            f'<span style="background:{BTN_BG};border:1px solid {BORDER};'
-            f'border-radius:20px;padding:3px 10px;font-size:0.7rem;'
-            f'color:{MUTED};margin:2px 4px 2px 0;display:inline-block;">'
-            f'{label}</span>'
-        )
-
     st.markdown(
-        f'<div style="margin-top:10px;">'
-        f'<div style="font-size:0.65rem;color:{MUTED};'
-        f'text-transform:uppercase;margin-bottom:5px;">Sources</div>'
-        + "".join(pills) +
-        "</div>",
+        f"<div style='font-size:0.65rem;color:{MUTED};"
+        f"text-transform:uppercase;margin-top:12px;margin-bottom:6px;'>Sources</div>",
         unsafe_allow_html=True
     )
 
+    for i, c in enumerate(sources):
+
+        file_name = c.get("file_name") or c.get("file_path") or "unknown_file"
+        func      = c.get("function_name") or ""
+        start     = c.get("start_line")
+        end       = c.get("end_line")
+
+        code = (
+            c.get("content")
+            or c.get("code")
+            or c.get("chunk")
+            or ""
+        )
+
+        header = file_name
+
+        if func:
+            header += f" — {func}"
+
+        if start and end:
+            header += f" (L{start}-{end})"
+
+        with st.expander(header, expanded=False):
+
+            if code:
+
+                st.code(
+                    code,
+                    language="python"
+                )
+
+            else:
+                st.markdown(
+                    f"<span style='color:{MUTED};font-size:0.8rem;'>"
+                    f"No snippet available for this chunk."
+                    f"</span>",
+                    unsafe_allow_html=True
+                )
 
 for msg in chat["messages"]:
 

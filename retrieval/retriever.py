@@ -86,6 +86,21 @@ def _embed_query(query: str, retries: int = 3, delay: float = 1.0) -> list[float
 
     raise RuntimeError(f"Failed to embed query after {retries + 1} attempts: {last_exc}")
 
+def load_code_snippet(file_path, start_line=None, end_line=None):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        if start_line and end_line:
+            snippet = "".join(lines[start_line-1:end_line])
+        else:
+            snippet = "".join(lines[:200])  # fallback
+
+        return snippet
+
+    except Exception:
+        return ""
+
 def retrieve_context(
     query:           str,
     user_role:       str   = "onboarding",
@@ -135,42 +150,56 @@ def retrieve_context(
     blocked = 0
 
     for doc, meta, dist in zip(
-        results["documents"][0],
-        results["metadatas"][0],
-        results["distances"][0],
-    ):
+    results["documents"][0],
+    results["metadatas"][0],
+    results["distances"][0],
+):
         similarity = round(1 - dist, 4)
-
+    
         if similarity < score_threshold:
             logger.debug(
                 "Dropping chunk (score %.4f < threshold %.2f) | source=%s",
                 similarity, score_threshold, meta.get("source_type", "?"),
             )
             continue
-
+        
         if _is_blocked(meta, user_role):
             blocked += 1
             continue
-
+        
+        file_path  = meta.get("file_path")
+        start_line = meta.get("start_line")
+        end_line   = meta.get("end_line")
+    
+        # Load snippet from real file
+        code_snippet = ""
+        if file_path:
+            code_snippet = load_code_snippet(file_path, start_line, end_line)
+    
+        # fallback to embedded text if snippet not found
+        if not code_snippet:
+            code_snippet = doc
+    
         chunks.append({
-            "text":          doc,
-            "metadata":      meta,
+            "text": doc,
+            "code": code_snippet,
+            "metadata": meta,
             "similarity_score": similarity,
-            "file_name":     meta.get("file_name"),
-            "file_path":     meta.get("file_path"),
+            "file_name": meta.get("file_name"),
+            "file_path": file_path,
             "function_name": meta.get("function_name"),
-            "language":      meta.get("language"),
-            "source_type":   meta.get("source_type"),
-            "project":       meta.get("project"),
-            "start_line":    meta.get("start_line"),
-            "end_line":      meta.get("end_line"),
-            "chunk_index":   meta.get("chunk_index"),
-            "total_chunks":  meta.get("total_chunks"),
+            "language": meta.get("language", "python"),
+            "source_type": meta.get("source_type"),
+            "project": meta.get("project"),
+            "start_line": start_line,
+            "end_line": end_line,
+            "chunk_index": meta.get("chunk_index"),
+            "total_chunks": meta.get("total_chunks"),
         })
-
-        if len(chunks) == top_k:
+    
+        if len(chunks) >= top_k:
             break
-
+        
     logger.info(
         "Retrieved %d chunk(s) | blocked=%d  role=%s  top_score=%s",
         len(chunks),
