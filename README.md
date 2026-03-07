@@ -4,7 +4,7 @@
 
 Modern developers struggle to maintain critical legacy system infrastructures since the memory/context behind deeply engraved code is trapped in unsearchable archives, such as the company's Slack Threads and Jira CSV exports. This "Context Gap" forces developers to spend weeks hunting reasons behind a specific logic.
 
-This is the problem PensieveAI aims to solve with the help of a 100% private, RAG (Retrieval Augmented Generation) based application that indexes a repository's code alongside additional context such as Slack threads and Jira CSV exports, thereby solving a WEEKS long problem in just HOURS.
+This is the problem PensieveAI aims to solve with the help of a 100% private, RAG (Retrieval Augmented Generation) based application that indexes a repository's code alongside additional context such as Slack threads and Jira CSV exports, thereby solving a *WEEKS* long problem in just *HOURS*.
 
 ### Architecture Diagram
 ![Architecutre Diagram](assets/architecture_diagram.png)
@@ -99,11 +99,22 @@ python ingest_script_freemed.py
 # OR
 python ingest_script_scrapy.py
 ```
-
-## Usage and Example
-
-## Project Structure
-
-## RAG Stuff
-
+5) Run ChromaDB server after ingestion:
+```
+chroma run --host 0.0.0.0 --port 8000 --path ./chromadb_store
+```
+6) Activate Ollama Server: 
+```
+ollama serve
+```
+7) Run Streamlit UI:
+```
+streamlit run app.py
+```
 ## Visuals and Screenshot
+
+![Context-engine-UI](assets/context-engine-ui1.png)
+![Context-engine-UI](assets/context-engine-ui2.png)
+![Context-engine-UI](assets/context-engine-ui3.png)
+![Context-engine-UI](assets/context-engine-ui4.png)
+![Context-engine-UI](assets/context-engine-ui5.png)
