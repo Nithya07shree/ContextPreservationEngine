@@ -117,5 +117,3 @@ streamlit run app.py
 ![Context-engine-UI](assets/context-engine-ui1.png)
 ![Context-engine-UI](assets/context-engine-ui2.png)
 ![Context-engine-UI](assets/context-engine-ui3.png)
-![Context-engine-UI](assets/context-engine-ui4.png)
-![Context-engine-UI](assets/context-engine-ui5.png)
